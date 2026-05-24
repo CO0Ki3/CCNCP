@@ -176,11 +176,40 @@ def pattern_tail_asymmetry(
 
 
 # ──────────────────────────────────────────────
-# 최종 패턴 후보 (4종)
+# Pattern H — 3연속 상승 모멘텀 (Triple Rise Momentum)
+# ──────────────────────────────────────────────
+# 아이디어: 3일 연속 강한 양봉 후 신고점 돌파 → 모멘텀 가속 구간 진입
+# 조건:
+#   - 직전 3일 모두 양봉 (close > open)
+#   - t-1, t-2 몸통 비율 ≥ rolling P50 (보통 이상 강도)
+#   - 오늘 종가 > 직전 4일 고점 중 최고 (신고점 돌파)
+# 파라미터: body_pct=50, window=60
+
+def pattern_triple_rise(
+    df: pd.DataFrame,
+    body_pct: float = 50.0,
+    window: int = 60,
+) -> pd.Series:
+    br   = _body_ratio(df)
+    br_p = _rolling_percentile(br, window, body_pct)
+    ret  = df["close"] - df["open"]
+
+    all_up  = (ret.shift(1) > 0) & (ret.shift(2) > 0) & (ret.shift(3) > 0)
+    all_big = (br.shift(1) >= br_p.shift(1)) & (br.shift(2) >= br_p.shift(2))
+    new_high = df["close"] > df["high"].rolling(4).max().shift(1)
+
+    signals = pd.Series("none", index=df.index)
+    signals[all_up & all_big & new_high] = "long"
+    return signals
+
+
+# ──────────────────────────────────────────────
+# 패턴 목록
 # ──────────────────────────────────────────────
 PATTERNS = {
     "TailEcho":        pattern_tail_echo,
     "BearAbsorption":  pattern_bear_absorption,
+    "TripleRise":      pattern_triple_rise,
     "Absorption":      pattern_absorption,
     "TailAsymmetry":   pattern_tail_asymmetry,
 }
@@ -189,6 +218,7 @@ PATTERNS = {
 FINAL_PATTERNS = {
     "TailEcho":       pattern_tail_echo,
     "BearAbsorption": pattern_bear_absorption,
+    "TripleRise":     pattern_triple_rise,
 }
 
 
