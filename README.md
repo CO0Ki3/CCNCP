@@ -57,7 +57,7 @@ NCP/
 | Phase 2 | 캔들패턴 후보 발굴 | ✅ 완료 |
 | Phase 3 | 전략 설계 | ✅ 완료 |
 | Phase 4 | 백테스트 | ✅ 완료 |
-| Phase 5 | 검증 및 최종 보고 | 대기 중 |
+| Phase 5 | 검증 및 최종 보고 | ✅ 완료 — 사용자 검토 대기 |
 
 ---
 
@@ -143,4 +143,4 @@ NCP/
 
 - [프로젝트 계획서](docs/PROJECT_PLAN.md)
 - [회의록](docs/MEETING_LOG.md)
-- [검증 보고서](docs/VALIDATION_REPORT.md) *(작성 예정)*
+- [검증 보고서](docs/VALIDATION_REPORT.md) ✅
