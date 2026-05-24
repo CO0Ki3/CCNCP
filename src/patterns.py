@@ -67,37 +67,37 @@ def pattern_tail_echo(
 
 
 # ──────────────────────────────────────────────
-# Pattern D (재설계) — 이중 압력 (Dual Pressure)
+# Pattern D (최종) — 하락 흡수 (Bear Absorption) · Long only
 # ──────────────────────────────────────────────
-# 변경: σ 기반 → 백분위수 기반 (NCP2: 첨도 17.2 환경에서 σ 부적합)
-# 조건: 2일 연속 반대 방향, 각 몸통 비율 ≥ 롤링 P60
-# 신호: 2번째 날 방향 (최근 승자 추종)
-# 목표: 100건 이상 신호 확보
+# DualPressure 재설계 과정에서 도출 (NCP1·NCP2 공동)
+# 아이디어: 강한 하락을 강한 상승으로 완전 회복 → 매수 세력 우위 확인
+#
+# 조건:
+#   t-2: 강한 하락일 (body_ratio ≥ rolling P75, close < open)
+#   t-1: 강한 상승일 (body_ratio ≥ rolling P60, close > open)
+#         + close[t-1] > open[t-2]  (이틀치 하락 완전 회복)
+# 신호: 오늘 Long 진입
+#
+# 파라미터: down_pct=75, up_pct=60, window=60
 
-def pattern_dual_pressure(
+def pattern_bear_absorption(
     df: pd.DataFrame,
-    body_pct: float = 60.0,
+    down_pct: float = 75.0,
+    up_pct: float = 60.0,
     window: int = 60,
 ) -> pd.Series:
-    br = _body_ratio(df)
-    br_threshold = _rolling_percentile(br, window, body_pct)
-
+    br  = _body_ratio(df)
     ret = df["close"] - df["open"]
-    prev1_ret = ret.shift(1)
-    prev2_ret = ret.shift(2)
-    prev1_br = br.shift(1)
-    prev2_br = br.shift(2)
-    prev1_p = br_threshold.shift(1)
-    prev2_p = br_threshold.shift(2)
 
-    big1 = prev1_br >= prev1_p
-    big2 = prev2_br >= prev2_p
-    opposite = np.sign(prev1_ret) != np.sign(prev2_ret)
-    valid = big1 & big2 & opposite & prev1_p.notna()
+    br_p_down = _rolling_percentile(br, window, down_pct).shift(2)
+    br_p_up   = _rolling_percentile(br, window, up_pct).shift(1)
+
+    is_down  = (ret.shift(2) < 0) & (br.shift(2) >= br_p_down)
+    is_up    = (ret.shift(1) > 0) & (br.shift(1) >= br_p_up)
+    recovery = df["close"].shift(1) > df["open"].shift(2)
 
     signals = pd.Series("none", index=df.index)
-    signals[valid & (prev1_ret > 0)] = "long"
-    signals[valid & (prev1_ret < 0)] = "short"
+    signals[is_down & is_up & recovery & br_p_down.notna()] = "long"
     return signals
 
 
@@ -179,10 +179,16 @@ def pattern_tail_asymmetry(
 # 최종 패턴 후보 (4종)
 # ──────────────────────────────────────────────
 PATTERNS = {
+    "TailEcho":        pattern_tail_echo,
+    "BearAbsorption":  pattern_bear_absorption,
+    "Absorption":      pattern_absorption,
+    "TailAsymmetry":   pattern_tail_asymmetry,
+}
+
+# 최종 확정 패턴 (백테스트 통과)
+FINAL_PATTERNS = {
     "TailEcho":       pattern_tail_echo,
-    "DualPressure":   pattern_dual_pressure,
-    "Absorption":     pattern_absorption,
-    "TailAsymmetry":  pattern_tail_asymmetry,
+    "BearAbsorption": pattern_bear_absorption,
 }
 
 
