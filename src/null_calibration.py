@@ -54,7 +54,10 @@ def roll_exits(panel, frac: float = 0.37) -> None:
                         float(pool.mean()) if len(pool) else np.nan)
 
 
-def run_null(frac: float = 0.37, out: str = "null_search3.csv") -> pd.DataFrame:
+def run_null(frac: float = 0.37, out: str = None) -> pd.DataFrame:
+    # 이동폭마다 다른 파일명으로 저장한다. 고정 파일명을 쓰면 반복 실행이
+    # 서로를 덮어써서, 나중에 반복 간 비교를 하려 할 때 표본이 소실된다.
+    out = out or f"null_search3_{frac}.csv"
     print("=" * 78)
     print(f"경험적 귀무 대조 — exits를 자산 길이의 {frac:.0%}만큼 순환이동")
     print("=" * 78)
