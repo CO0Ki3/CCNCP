@@ -62,10 +62,9 @@ def run_null(frac: float = 0.37, out: str = "null_search3.csv") -> pd.DataFrame:
     sp = SearchPanel()
     roll_exits(sp, frac)
 
-    # 워커가 쓰는 전역 FlatPanel도 같은 귀무 패널로 교체
-    ps3._FP = FlatPanel(sp)
-
-    raw = ps3.stage1()
+    # spawn 방식에서는 부모 전역이 워커로 안 넘어가므로 명시적으로 전달한다
+    fp = FlatPanel(sp)
+    raw = ps3.stage1(fp=fp)
     if raw.empty:
         print("귀무 대조에서 1단 통과 후보 없음 — 탐색이 잡음을 전혀 못 건짐")
         return pd.DataFrame()
