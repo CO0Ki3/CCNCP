@@ -75,6 +75,16 @@ class FlatPanel:
             with np.errstate(invalid="ignore", divide="ignore"):
                 self.base[per] = np.where(cnt > 0, tot / np.maximum(cnt, 1), np.nan)
 
+    def __getstate__(self):
+        """워커로 보낼 때 원본 Panel(30개 DataFrame)은 떼어낸다.
+
+        _scan_i는 offsets·exits·atoms·trig·ok·base·cls만 쓴다. Panel까지
+        같이 절이면 전송량이 수십 MB 늘어날 뿐 쓰이지 않는다.
+        """
+        st = self.__dict__.copy()
+        st["panel"] = None
+        return st
+
     # ── 채점 ──────────────────────────────────────
     def score_mask(self, sel: np.ndarray, period: str) -> dict:
         """이미 구간·유효성까지 AND된 신호 마스크를 자산별로 집계한다."""

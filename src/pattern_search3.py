@@ -39,12 +39,20 @@ RESULTS_DIR = Path(__file__).parent.parent / "results"
 TOP_STRICT = 30      # 자산군 3개 모두에서 통하는 후보 (범용 요건)
 TOP_OPEN = 30        # 자산군 제약 없이 성적만 좋은 후보 (대조군)
 
-_FP = None           # 워커 프로세스별 전역 (fork로 공유)
+_FP = None           # 워커 프로세스별 전역
 
 
-def _init():
+def _init(payload=None):
+    """워커 초기화.
+
+    macOS 파이썬은 multiprocessing 기본 시작 방식이 spawn이라 부모의 전역이
+    워커로 상속되지 않는다. 그래서 귀무 대조처럼 변형된 패널을 쓰려면
+    payload로 명시적으로 넘겨야 한다. payload가 없으면 워커가 직접 만든다.
+    """
     global _FP
-    if _FP is None:
+    if payload is not None:
+        _FP = payload
+    elif _FP is None:
         _FP = FlatPanel()
 
 
@@ -88,20 +96,20 @@ def _scan_i(i: int):
     return n_pass, out[:KEEP_PER_ATOM]
 
 
-def stage1(n_proc: int = 6) -> pd.DataFrame:
+def stage1(n_proc: int = 4, fp: "FlatPanel" = None) -> pd.DataFrame:
     total = 3103100
     print(f"1단 스크리닝 — C({len(ATOMS)},3) × 방아쇠 {len(TRIGGERS)} = "
           f"{total:,}개 후보")
     t0 = time.time()
     rows, n_pass = [], 0
-    with Pool(n_proc, initializer=_init) as pool:
+    with Pool(n_proc, initializer=_init, initargs=(fp,)) as pool:
         for n, (cnt, part) in enumerate(
                 pool.imap_unordered(_scan_i, range(len(ATOMS))), 1):
             rows += part
             n_pass += cnt
             if n % 20 == 0:
                 print(f"  원자 {n}/{len(ATOMS)} 완료, 통과 {n_pass:,}개, "
-                      f"{time.time()-t0:.0f}초")
+                      f"{time.time()-t0:.0f}초", flush=True)
     print(f"1단 완료 {time.time()-t0:.0f}초 — 통과 {n_pass:,}개 / {total:,}개 "
           f"({n_pass/total:.1%}), 상위 {len(rows):,}개 보관")
     return pd.DataFrame(rows, columns=[
