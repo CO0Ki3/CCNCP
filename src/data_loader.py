@@ -73,7 +73,15 @@ def _normalize(df: pd.DataFrame, name: str = "") -> pd.DataFrame:
     lo = df[["low", "open", "close"]].min(axis=1)
     n_fixed = int(((hi != df["high"]) | (lo != df["low"])).sum())
     if n_fixed:
-        print(f"  [fix]  {name or '?'}: 봉 무결성 위반 {n_fixed}행 보정")
+        # 이 보정은 OHLC 불변식을 데이터 품질 게이트로 못 쓰게 만든다.
+        # 컬럼 순서를 잘못 매핑하거나 API 스키마가 바뀌어도 조용히 통과하게 되므로,
+        # 산발적 오타(0.1% 이하)만 보정하고 그 이상이면 실패시킨다.
+        rate = n_fixed / len(df)
+        if rate > 0.001:
+            raise ValueError(
+                f"{name or '?'}: 봉 무결성 위반 {n_fixed}/{len(df)}행 ({rate:.2%}). "
+                f"산발적 오타 수준을 넘었다 — 컬럼 매핑이나 API 스키마를 확인할 것.")
+        print(f"  [fix]  {name or '?'}: 봉 무결성 위반 {n_fixed}행 보정 ({rate:.3%})")
     df["high"], df["low"] = hi, lo
     return df
 

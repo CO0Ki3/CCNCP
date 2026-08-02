@@ -67,11 +67,15 @@ class Panel:
             self.is_mask[name] = warm & ~oos
             self.oos_mask[name] = warm & oos
 
-    def evaluate(self, fn, period: str = "OOS", rng=None) -> pd.DataFrame:
-        """후보 패턴 fn(df)->Series를 전 자산에서 평가. 자산당 1행."""
+    def evaluate(self, fn, period: str = "OOS", rng=None):
+        """후보 패턴 fn(df)->Series를 전 자산에서 평가.
+
+        반환: (자산당 1행 DataFrame, 자산별 거래수익률 계열 dict)
+        계열을 함께 돌려주는 이유는 score()가 자산 간 상관을 보정해야 하기 때문이다.
+        """
         rng = rng or np.random.default_rng(SEED)
         masks = self.oos_mask if period == "OOS" else self.is_mask
-        rows = []
+        rows, series = [], {}
         for name, df in self.data.items():
             try:
                 sig = (fn(df) == "long").to_numpy()
@@ -86,13 +90,14 @@ class Panel:
                                  asset_class=ASSET_CLASS.get(name, "?"), **m))
                 continue
             e = random_edge(ex, mask, m["trades"], m["avg_return"], rng)
+            series[name] = pd.Series(ex[sel], index=df.index[sel])
             rows.append(dict(asset=name, asset_class=ASSET_CLASS.get(name, "?"),
                              **m, **e,
                              p_shift=shift_test(sig, ex, mask, m["avg_return"], rng)))
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows), series
 
 
-def score(panel_df: pd.DataFrame) -> dict:
+def score(panel_df: pd.DataFrame, series: dict = None) -> dict:
     """패널 결과 한 장을 요약 점수로 압축한다.
 
     핵심은 pf가 아니라 edge다. 상승 자산에서는 랜덤 진입도 pf>1이 나오므로
@@ -100,8 +105,18 @@ def score(panel_df: pd.DataFrame) -> dict:
 
     combined_p: 자산별 p_shift를 Stouffer 방식으로 합산.
       개별 자산은 표본이 작아 유의하지 않아도, 같은 방향의 약한 우위가
-      여러 자산에 걸쳐 반복되면 전체로는 유의해질 수 있다. 반대로 한두 자산의
-      큰 성과가 나머지의 무성과에 희석되므로 요행에 강하다.
+      여러 자산에 걸쳐 반복되면 전체로는 유의해질 수 있다.
+
+      단, 표준 Stouffer는 검정들이 서로 독립이라고 가정한다. 자산 패널에서
+      이 가정은 거짓이다. SPY·QQQ·IWM·AAPL은 같은 날 같은 방향으로 움직이므로
+      "9개 자산에서 재현됐다"가 실제로는 1~2번 재현된 것에 불과할 수 있다.
+      실측 사례: 어떤 후보의 자산 16개 합산 p가 독립 가정으로 1.6e-05였는데,
+      거래수익률 쌍별 상관(평균 0.37)을 반영하니 유효 표본이 2.4개로 줄고
+      p는 0.053이 됐다. 3,000배 차이다.
+
+      그래서 series(자산별 거래수익률 계열)가 주어지면 Strube 보정을 적용한다:
+          z = Σz_i / sqrt(n + 2·Σ_{i<j} ρ_ij)
+      series가 없으면 보정 없이 계산하되 combined_p_naive로만 보고한다.
     """
     g = panel_df[panel_df.trades >= MIN_TRADES].dropna(subset=["edge"])
     n = len(g)
@@ -109,9 +124,21 @@ def score(panel_df: pd.DataFrame) -> dict:
         return dict(n_assets=n, ok=False, reason=f"자산 {n}개 < {MIN_ASSETS}")
 
     from scipy.stats import norm
-    z = norm.isf(g.p_shift.clip(1e-4, 1 - 1e-4)).sum() / np.sqrt(n)
+    z_sum = norm.isf(g.p_shift.clip(1e-4, 1 - 1e-4)).sum()
+    z_naive = z_sum / np.sqrt(n)
+    n_eff, z = float(n), z_naive
+    if series:
+        aligned = pd.DataFrame({a: series[a] for a in g.asset if a in series})
+        if aligned.shape[1] >= 2:
+            C = np.nan_to_num(aligned.corr().to_numpy(), nan=0.0)
+            np.fill_diagonal(C, 1.0)
+            rho_sum = max(C[np.triu_indices(len(C), 1)].sum(), 0.0)
+            denom = len(C) + 2 * rho_sum
+            n_eff = len(C) ** 2 / denom
+            z = z_sum / np.sqrt(denom)
     return dict(
-        n_assets=n, ok=True,
+        n_assets=n, ok=True, n_eff=float(n_eff),
+        combined_p_naive=float(norm.sf(z_naive)),
         trades=int(g.trades.sum()),
         trades_per_asset=float(g.trades.median()),
         edge_med=float(g.edge.median()),
@@ -137,7 +164,7 @@ def passes(s: dict) -> bool:
     """
     return (s.get("ok")
             and s["edge_pos"] >= 0.65        # 자산의 2/3 이상에서 랜덤 대비 우위
-            and s["combined_p"] < 0.01       # 합산 유의성
+            and s["combined_p"] < 0.01       # 합산 유의성 (자산 간 상관 보정 후)
             and s["edge_med"] > 0
             and min(s["edge_pos_crypto"], s["edge_pos_equity"],
                     s["edge_pos_cfx"]) >= 0.5)   # 특정 자산군 전용이 아닐 것
@@ -146,8 +173,8 @@ def passes(s: dict) -> bool:
 def report(name: str, panel: Panel, fn, rng=None) -> dict:
     """IS로 고르고 OOS로 확인하는 2단 평가."""
     rng = rng or np.random.default_rng(SEED)
-    s_is = score(panel.evaluate(fn, "IS", rng))
-    s_oos = score(panel.evaluate(fn, "OOS", rng))
+    s_is = score(*panel.evaluate(fn, "IS", rng))
+    s_oos = score(*panel.evaluate(fn, "OOS", rng))
     return dict(pattern=name,
                 **{f"IS_{k}": v for k, v in s_is.items()},
                 **{f"OOS_{k}": v for k, v in s_oos.items()},

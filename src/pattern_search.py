@@ -175,7 +175,7 @@ class SearchPanel(Panel):
     def full_score(self, atoms, trigger: str, period: str, rng) -> dict:
         """2단 — 순환이동 검정 포함한 정식 채점."""
         masks = self.is_mask if period == "IS" else self.oos_mask
-        rows = []
+        rows, series = [], {}
         for name in self.data:
             ex = self.exits[name]
             sig = self.signal(name, atoms, trigger)
@@ -186,6 +186,8 @@ class SearchPanel(Panel):
                 continue
             r = ex[sel]
             base = getattr(self, f"_base_{period}_{name}")
+            # 자산 간 상관 보정에 쓰기 위해 진입일을 색인으로 보존한다
+            series[name] = pd.Series(r, index=self.data[name].index[sel])
             rows.append(dict(
                 asset=name, asset_class=ASSET_CLASS.get(name, "?"), trades=k,
                 win_rate=float((r > 0).mean()), avg_return=float(r.mean()),
@@ -193,8 +195,7 @@ class SearchPanel(Panel):
                 edge=float(r.mean() - base),
                 p_shift=shift_test(sig, ex, masks[name], float(r.mean()), rng)))
         df = pd.DataFrame(rows)
-        s = score(df)
-        return s, df
+        return score(df, series), df
 
 
 def describe(atoms, trigger: str) -> str:
@@ -238,9 +239,11 @@ def search(panel: SearchPanel, n_atoms: int = 2, top_k: int = 40) -> pd.DataFram
                         atoms=r.atoms, trigger=r.trigger,
                         **{f"IS_{k}": v for k, v in s_is.items()},
                         **{f"OOS_{k}": v for k, v in s_oos.items()}))
-        print(f"  [{i+1:2d}/{len(df)}] {out[-1]['desc'][:58]:58s} "
+        print(f"  [{i+1:2d}/{len(df)}] {out[-1]['desc'][:52]:52s} "
               f"OOS edge+={s_oos.get('edge_pos', float('nan')):.2f} "
-              f"p={s_oos.get('combined_p', float('nan')):.4f}")
+              f"n_eff={s_oos.get('n_eff', float('nan')):4.1f} "
+              f"p={s_oos.get('combined_p', float('nan')):.4f} "
+              f"(독립가정 {s_oos.get('combined_p_naive', float('nan')):.1e})")
     return pd.DataFrame(out)
 
 
@@ -255,7 +258,12 @@ if __name__ == "__main__":
         res.drop(columns=["atoms"]).to_csv(out, index=False)
         print(f"\n-> results/{out.name}")
         cols = ["desc", "IS_edge_pos", "IS_combined_p",
-                "OOS_trades", "OOS_edge_med", "OOS_edge_pos",
-                "OOS_pf_med", "OOS_combined_p"]
+                "OOS_trades", "OOS_edge_med", "OOS_edge_pos", "OOS_pf_med",
+                "OOS_n_eff", "OOS_combined_p_naive", "OOS_combined_p"]
+        res = res.sort_values("OOS_combined_p")
         print("\n" + res[[c for c in cols if c in res.columns]]
               .round(4).to_string(index=False))
+        thr = 0.05 / len(res)
+        n_pass = int((res.OOS_combined_p < thr).sum())
+        print(f"\n2단 검정 {len(res)}개에 대한 Bonferroni 문턱 {thr:.5f} "
+              f"-> 통과 {n_pass}개")
